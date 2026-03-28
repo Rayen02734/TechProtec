@@ -1,145 +1,137 @@
 <?php
 /**
- * TechProtect v2.1 – Admin Dashboard
+ * TechProtect v2.1 – Client Dashboard
  */
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/functions.php';
 
-requireRole(ROLE_ADMIN);
-$db = getDB();
+requireRole(ROLE_CLIENT);
+
+$db     = getDB();
+$userId = currentUserId();
 
 // Stats
-function dbCount(string $sql): int {
-    $r = getDB()->query($sql); return $r ? (int)$r->fetchColumn() : 0;
-}
-$stats = [
-    'users'         => dbCount("SELECT COUNT(*) FROM users"),
-    'clients'       => dbCount("SELECT COUNT(*) FROM users WHERE role='client'"),
-    'police'        => dbCount("SELECT COUNT(*) FROM users WHERE role='police'"),
-    'devices'       => dbCount("SELECT COUNT(*) FROM devices"),
-    'stolen'        => dbCount("SELECT COUNT(*) FROM devices WHERE status='stolen'"),
-    'declarations'  => dbCount("SELECT COUNT(*) FROM theft_declarations"),
-    'active_gps'    => dbCount("SELECT COUNT(*) FROM gps_modules WHERE is_active=1 AND expires_at > NOW()"),
-    'gps_points'    => dbCount("SELECT COUNT(*) FROM gps_tracking"),
-    'logs'          => dbCount("SELECT COUNT(*) FROM logs"),
-];
+$totalDevices   = (int)$db->prepare("SELECT COUNT(*) FROM devices WHERE owner_id = ?")->execute([$userId]) ? null : null;
+$stmtD = $db->prepare("SELECT COUNT(*) FROM devices WHERE owner_id = ?"); $stmtD->execute([$userId]); $totalDevices = (int)$stmtD->fetchColumn();
+$stmtS = $db->prepare("SELECT COUNT(*) FROM devices WHERE owner_id = ? AND status='stolen'"); $stmtS->execute([$userId]); $stolenCount = (int)$stmtS->fetchColumn();
+$stmtT = $db->prepare("SELECT COUNT(*) FROM theft_declarations WHERE owner_id = ? AND status != 'closed'"); $stmtT->execute([$userId]); $openCases = (int)$stmtT->fetchColumn();
+$stmtN = $db->prepare("SELECT COUNT(*) FROM notifications WHERE user_id = ? AND is_read = 0"); $stmtN->execute([$userId]); $unreadN = (int)$stmtN->fetchColumn();
 
-// Recent logs
-$recentLogs = $db->query("
-    SELECT l.*, u.full_name AS user_name, u.role AS user_role
-    FROM logs l
-    LEFT JOIN users u ON u.id = l.user_id
-    ORDER BY l.created_at DESC LIMIT 10
-")->fetchAll();
+// Recent devices
+$stmtRD = $db->prepare("SELECT * FROM devices WHERE owner_id = ? ORDER BY registered_at DESC LIMIT 5"); $stmtRD->execute([$userId]); $recentDevices = $stmtRD->fetchAll();
 
-// Recent theft declarations
-$recentThefts = $db->query("
-    SELECT td.*, d.device_name, d.serial_number, u.full_name AS owner_name
-    FROM theft_declarations td
-    JOIN devices d ON d.id = td.device_id
-    JOIN users u ON u.id = td.owner_id
-    ORDER BY td.declared_at DESC LIMIT 5
-")->fetchAll();
+// Recent notifications
+$stmtRN = $db->prepare("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 6"); $stmtRN->execute([$userId]); $notifications = $stmtRN->fetchAll();
 
-$pageTitle  = 'Admin Dashboard';
+$pageTitle  = 'My Dashboard';
 $activePage = 'dashboard';
 require_once __DIR__ . '/../includes/header.php';
 ?>
 
-<div class="section-title"><i class="fa-solid fa-gauge"></i> System Dashboard</div>
-
-<!-- Stats Row 1 -->
-<div class="stat-grid" style="margin-bottom:16px;">
-    <div class="stat-tile">
-        <div class="stat-icon cyan"><i class="fa-solid fa-users"></i></div>
-        <div><div class="stat-value"><?= $stats['users'] ?></div><div class="stat-label">Total Users</div></div>
-    </div>
-    <div class="stat-tile">
-        <div class="stat-icon green"><i class="fa-solid fa-user"></i></div>
-        <div><div class="stat-value"><?= $stats['clients'] ?></div><div class="stat-label">Clients</div></div>
-    </div>
-    <div class="stat-tile">
-        <div class="stat-icon violet"><i class="fa-solid fa-shield"></i></div>
-        <div><div class="stat-value"><?= $stats['police'] ?></div><div class="stat-label">Police Officers</div></div>
-    </div>
-    <div class="stat-tile">
-        <div class="stat-icon cyan"><i class="fa-solid fa-mobile"></i></div>
-        <div><div class="stat-value"><?= $stats['devices'] ?></div><div class="stat-label">Registered Devices</div></div>
-    </div>
+<div class="section-title">
+    <i class="fa-solid fa-gauge"></i> My Dashboard
 </div>
+
+<!-- Stats -->
 <div class="stat-grid">
     <div class="stat-tile">
+        <div class="stat-icon cyan"><i class="fa-solid fa-mobile"></i></div>
+        <div><div class="stat-value"><?= $totalDevices ?></div><div class="stat-label">Registered Devices</div></div>
+    </div>
+    <div class="stat-tile">
         <div class="stat-icon red"><i class="fa-solid fa-triangle-exclamation"></i></div>
-        <div><div class="stat-value"><?= $stats['stolen'] ?></div><div class="stat-label">Stolen Devices</div></div>
+        <div><div class="stat-value"><?= $stolenCount ?></div><div class="stat-label">Stolen Devices</div></div>
     </div>
     <div class="stat-tile">
-        <div class="stat-icon orange"><i class="fa-solid fa-file-shield"></i></div>
-        <div><div class="stat-value"><?= $stats['declarations'] ?></div><div class="stat-label">Theft Declarations</div></div>
+        <div class="stat-icon orange"><i class="fa-solid fa-folder-open"></i></div>
+        <div><div class="stat-value"><?= $openCases ?></div><div class="stat-label">Open Cases</div></div>
     </div>
     <div class="stat-tile">
-        <div class="stat-icon green"><i class="fa-solid fa-satellite-dish"></i></div>
-        <div><div class="stat-value"><?= $stats['active_gps'] ?></div><div class="stat-label">Active GPS Sessions</div></div>
-    </div>
-    <div class="stat-tile">
-        <div class="stat-icon violet"><i class="fa-solid fa-location-dot"></i></div>
-        <div><div class="stat-value"><?= number_format($stats['gps_points']) ?></div><div class="stat-label">GPS Data Points</div></div>
+        <div class="stat-icon violet"><i class="fa-solid fa-bell"></i></div>
+        <div><div class="stat-value"><?= $unreadN ?></div><div class="stat-label">Unread Alerts</div></div>
     </div>
 </div>
 
-<div class="grid-2" style="margin-top:24px;">
-    <!-- Recent Thefts -->
+<div class="grid-2">
+    <!-- My Devices -->
     <div class="card">
         <div class="card-header">
-            <div class="card-title"><i class="fa-solid fa-triangle-exclamation"></i> Recent Thefts</div>
+            <div class="card-title"><i class="fa-solid fa-mobile"></i> My Devices</div>
+            <a href="<?= APP_URL ?>/client/register_device.php" class="btn btn-primary btn-sm">
+                <i class="fa-solid fa-plus"></i> Add Device
+            </a>
         </div>
-        <?php if ($recentThefts): ?>
+        <?php if ($recentDevices): ?>
         <div class="table-wrap">
             <table>
-                <thead><tr><th>Device</th><th>Owner</th><th>Date</th><th>Status</th></tr></thead>
+                <thead><tr><th>Device</th><th>Serial</th><th>Status</th><th></th></tr></thead>
                 <tbody>
-                <?php foreach ($recentThefts as $t): ?>
+                <?php foreach ($recentDevices as $d): ?>
                 <tr>
-                    <td><?= e($t['device_name']) ?><br><small style="color:var(--text-muted)"><?= e($t['serial_number']) ?></small></td>
-                    <td style="font-size:.83rem"><?= e($t['owner_name']) ?></td>
-                    <td style="font-size:.8rem;color:var(--text-muted)"><?= formatDate($t['declared_at'],'d/m H:i') ?></td>
-                    <td><span class="badge badge-<?= $t['status'] ?>"><?= ucfirst($t['status']) ?></span></td>
+                    <td>
+                        <strong><?= e($d['device_name']) ?></strong><br>
+                        <small style="color:var(--text-muted)"><?= e($d['brand']) ?> <?= e($d['model']) ?></small>
+                    </td>
+                    <td><code style="font-size:.8rem"><?= e($d['serial_number']) ?></code></td>
+                    <td><span class="badge badge-<?= $d['status'] ?>"><?= ucfirst($d['status']) ?></span></td>
+                    <td>
+                        <?php if ($d['status'] === 'active'): ?>
+                        <a href="<?= APP_URL ?>/client/declare_theft.php?device_id=<?= $d['id'] ?>" class="btn btn-danger btn-sm">Report</a>
+                        <?php endif; ?>
+                    </td>
                 </tr>
                 <?php endforeach; ?>
                 </tbody>
             </table>
         </div>
+        <a href="<?= APP_URL ?>/client/my_devices.php" style="display:block;text-align:center;margin-top:14px;font-size:.83rem;">View all devices →</a>
         <?php else: ?>
-        <div class="empty-state"><i class="fa-solid fa-shield-check"></i><p>No theft declarations.</p></div>
+        <div class="empty-state">
+            <i class="fa-solid fa-mobile"></i>
+            <p>No devices registered yet.</p>
+            <a href="<?= APP_URL ?>/client/register_device.php" class="btn btn-primary btn-sm" style="margin-top:12px;">Register your first device</a>
+        </div>
         <?php endif; ?>
     </div>
 
-    <!-- Recent Logs -->
+    <!-- Notifications -->
     <div class="card">
         <div class="card-header">
-            <div class="card-title"><i class="fa-solid fa-list"></i> Recent Events</div>
-            <a href="<?= APP_URL ?>/admin/logs.php" class="btn btn-ghost btn-sm">View All</a>
+            <div class="card-title"><i class="fa-solid fa-bell"></i> Alerts</div>
+            <?php if ($unreadN > 0): ?>
+            <button onclick="markAllRead()" class="btn btn-ghost btn-sm">Mark all read</button>
+            <?php endif; ?>
         </div>
-        <div style="display:flex;flex-direction:column;gap:8px;">
-        <?php foreach ($recentLogs as $log): ?>
-        <div style="display:flex;gap:12px;align-items:flex-start;padding:8px;border-radius:6px;background:var(--bg-input);">
-            <div style="flex:1;overflow:hidden;">
-                <div style="font-size:.82rem;font-weight:600"><?= e($log['action']) ?></div>
-                <div style="font-size:.76rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><?= e($log['description']) ?></div>
+        <?php if ($notifications): ?>
+        <div style="display:flex;flex-direction:column;gap:10px;" id="notifList">
+            <?php foreach ($notifications as $n): ?>
+            <div class="notif-item <?= !$n['is_read'] ? 'notif-unread' : '' ?>" id="notif-<?= $n['id'] ?>"
+                 style="padding:12px;border-radius:8px;background:<?= !$n['is_read'] ? 'rgba(6,182,212,.06)' : 'var(--bg-input)' ?>;border:1px solid <?= !$n['is_read'] ? 'rgba(6,182,212,.2)' : 'var(--border)' ?>;">
+                <div style="font-size:.85rem;font-weight:<?= !$n['is_read'] ? '600' : '400' ?>">
+                    <?= e($n['title']) ?>
+                </div>
+                <div style="font-size:.78rem;color:var(--text-muted);margin-top:3px;"><?= e($n['message']) ?></div>
+                <div style="font-size:.72rem;color:var(--text-dim);margin-top:5px;"><?= formatDate($n['created_at']) ?></div>
             </div>
-            <div style="font-size:.72rem;color:var(--text-dim);white-space:nowrap"><?= formatDate($log['created_at'],'H:i:s') ?></div>
+            <?php endforeach; ?>
         </div>
-        <?php endforeach; ?>
-        </div>
+        <?php else: ?>
+        <div class="empty-state"><i class="fa-solid fa-bell-slash"></i><p>No notifications yet.</p></div>
+        <?php endif; ?>
     </div>
 </div>
 
-<!-- Quick Links -->
-<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:24px;">
-    <a href="<?= APP_URL ?>/admin/manage_users.php"    class="btn btn-ghost"><i class="fa-solid fa-users"></i> Manage Users</a>
-    <a href="<?= APP_URL ?>/admin/gps_activations.php" class="btn btn-ghost"><i class="fa-solid fa-satellite-dish"></i> GPS Monitor</a>
-    <a href="<?= APP_URL ?>/admin/logs.php"            class="btn btn-ghost"><i class="fa-solid fa-list"></i> System Logs</a>
-    <a href="<?= APP_URL ?>/admin/config.php"          class="btn btn-ghost"><i class="fa-solid fa-gear"></i> Configuration</a>
-</div>
+<script>
+async function markAllRead() {
+    await fetch('<?= APP_URL ?>/api/notifications.php?action=read_all', { method: 'POST' });
+    document.querySelectorAll('.notif-unread').forEach(el => {
+        el.style.background = 'var(--bg-input)';
+        el.style.border     = '1px solid var(--border)';
+        el.classList.remove('notif-unread');
+    });
+    TP.toast('All notifications marked as read.', 'success');
+}
+</script>
 
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>
